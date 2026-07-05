@@ -283,3 +283,65 @@ plt.tight_layout()
 plt.savefig(os.path.join(outdir, "metric_verification_slice.png"), dpi=150)
 plt.close()
 print(f"✅ Metric validation complete. Benchmark comparison slice generated successfully inside: {outdir}")
+
+
+#%%
+
+# =====================================================================
+# 5. DATASET CONSOLIDATION AND VISUALIZATION SUMMARY
+# =====================================================================
+# Convert results metrics dictionary stack to structured pandas dataframes
+df_results = pd.DataFrame(results)
+csv_save_path = os.path.join(outdir, "evaluation_results.csv")
+df_results.to_csv(csv_save_path, index=False)
+print(f"\n[✓] Telemetry complete! Structured evaluation tracking spreadsheet stored at: {csv_save_path}")
+
+# --- NEW: COMPUTE AND DISPLAY METRIC AVERAGES ---
+print("\n" + "="*60)
+print(f"   FINAL AGGREGATED PERFORMANCE METRICS SUMMARY (STAGE {TEST_STAGE})")
+print("="*60)
+
+# Calculate global mean and standard deviation for formal paper/report recording
+means = df_results[['loss', 'ssim', 'psnr', 'rmse', 'hfen']].mean()
+stds  = df_results[['loss', 'ssim', 'psnr', 'rmse', 'hfen']].std()
+
+print(f"  • Overall 3D SSIM : {means['ssim']:.4f} ± {stds['ssim']:.4f}")
+print(f"  • Overall PSNR    : {means['psnr']:.2f} ± {stds['psnr']:.2f} dB")
+print(f"  • Overall RMSE (%) : {means['rmse']:.4f} ± {stds['rmse']:.4f}%")
+print(f"  • Overall HFEN    : {means['hfen']:.4f} ± {stds['hfen']:.4f}")
+print(f"  • Model Eval Loss : {means['loss']:.2e} ± {stds['loss']:.2e}")
+print("="*60)
+
+# Granular Breakdown: Average per patient to profile individual subject variations
+print("\n[Granular Breakdown] Mean Metrics Grouped Per Patient:")
+patient_summary = df_results.groupby('patient')[['ssim', 'psnr', 'rmse', 'hfen']].mean()
+print(patient_summary.to_string())
+print("="*60)
+
+# Save summary stats to a text file for easy reference
+summary_txt_path = os.path.join(outdir, "summary_metrics.txt")
+with open(summary_txt_path, "w") as f:
+    f.write(f"=== STAGE {TEST_STAGE} AGGREGATED METRICS ===\n")
+    f.write(f"SSIM: {means['ssim']:.4f} ± {stds['ssim']:.4f}\n")
+    f.write(f"PSNR: {means['psnr']:.2f} ± {stds['psnr']:.2f} dB\n")
+    f.write(f"RMSE: {means['rmse']:.4f} ± {stds['rmse']:.4f}%\n")
+    f.write(f"HFEN: {means['hfen']:.4f} ± {stds['hfen']:.4f}\n\n")
+    f.write("=== PER PATIENT AVERAGES ===\n")
+    f.write(patient_summary.to_string())
+
+print(f"[✓] Summary metric text logs stored at: {summary_txt_path}")
+
+# Render cross-checking midplane validation slice tracking maps
+fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+axes[0].imshow(x_k_cpu[:, :, 80], cmap='gray', clim=(-0.1, 0.1))
+axes[0].set_title(f'Stage {TEST_STAGE} Output prediction (Slice 80)')
+axes[0].axis('off')
+
+axes[1].imshow(sus[:, :, 80], cmap='gray', clim=(-0.1, 0.1))
+axes[1].set_title('Ground Truth COSMOS')
+axes[1].axis('off')
+
+plt.tight_layout()
+plt.savefig(os.path.join(outdir, "metric_verification_slice.png"), dpi=150)
+plt.close()
+print(f"✅ Metric validation complete. Benchmark comparison slice generated successfully inside: {outdir}")

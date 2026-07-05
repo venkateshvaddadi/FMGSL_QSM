@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jul  5 14:40:02 2026
+
+@author: venkatesh
+"""
+
 import os
 import torch
 from torch.utils.data import DataLoader
@@ -150,7 +158,6 @@ for epoch in range(1, epochs + 1):
           f"L_Sem (Clusters): {epoch_sem/num_batches:.4f}")
     
     # Periodic model parameter preservation
-    if epoch % 10 == 0:
-        os.makedirs("pretrained", exist_ok=True)
-        torch.save(recon_net.state_dict(), f"pretrained/qsmnet_stage2_epoch_{epoch}.pt")
-        print(f"[Checkpoint Save] Stored current model state snapshot for epoch {epoch}.")
+    os.makedirs("pretrained", exist_ok=True)
+    torch.save(recon_net.state_dict(), f"pretrained/qsmnet_stage2_epoch_{epoch}.pt")
+    print(f"[Checkpoint Save] Stored current model state snapshot for epoch {epoch}.")

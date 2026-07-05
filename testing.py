@@ -153,8 +153,9 @@ results = []  # Metric tracking warehouse array
 if TEST_STAGE == 1:
     print("[*] Evaluation Target: STAGE-1 Supervised Baseline Model")
     model_path = "savedModels/QSMnet_Stage1/QSMnet_50_model.pth"
-    model_path = "savedModels/QSMnet_Stage1/QSMnet_50_model.pth"
-    model_path = "/media/venkatesh/DATA/venkatesh/IISc/MIG_LAB_WORK/Experiments/QSM_venkatesh/QSM_Other_Experiments/QSMnet/savedModels/QSMnet/27Dec_0244pm_model/QSMnet_5_model.pth"
+    model_path = "savedModels/QSMnet_Stage1/QSMnet_2_model.pth"
+
+    # model_path = "/media/venkatesh/DATA/venkatesh/IISc/MIG_LAB_WORK/Experiments/QSM_venkatesh/QSM_Other_Experiments/QSMnet/savedModels/QSMnet/27Dec_0244pm_model/QSMnet_5_model.pth"
     outdir = "savedModels/QSMnet_Stage1/predictions_epoch_50/"
 else:
     print("[*] Evaluation Target: STAGE-2 Semantic Fine-Tuned Model")

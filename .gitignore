@@ -1,0 +1,15 @@
+# Ignore python compilation caches
+__pycache__/
+*.pyc
+
+# Ignore heavy model checkpoints & evaluation metrics files (exceeding 100MB limit)
+pretrained/
+savedModels/
+savedModels_stage2/
+*.pth
+*.pt
+*.npy
+*.mat
+
+# Ignore local system tracking files
+.DS_Store

@@ -30,24 +30,18 @@ print('=' * 85)
 # =====================================================================
 # 1. SPECIALIZED QSM EVALUATION METRICS REFERENCE
 # =====================================================================
-
 def compute_psnr(chi_recon, chi_true):
     img1 = np.asarray(chi_recon).copy()
     img2 = np.asarray(chi_true).copy()
-
     min_img = min(img1.min(), img2.min())
     img1[img1 != 0] -= min_img
     img2[img2 != 0] -= min_img
-
     max_img = max(img1.max(), img2.max())
     if max_img != 0:
         img1 = 255 * img1 / max_img
         img2 = 255 * img2 / max_img
-
     mse = np.mean((img1 - img2) ** 2)
-    if mse == 0:
-        return float('inf')
-
+    if mse == 0: return float('inf')
     return 20 * np.log10(255.0 / np.sqrt(mse))
 
 def compute_rmse(chi_recon, chi_true):
@@ -55,32 +49,25 @@ def compute_rmse(chi_recon, chi_true):
     chi_true = np.asarray(chi_true)
     numerator = np.linalg.norm(chi_recon.ravel() - chi_true.ravel())
     denominator = np.linalg.norm(chi_true.ravel())
-    if denominator == 0:
-        return float('inf')
+    if denominator == 0: return float('inf')
     return 100 * numerator / denominator
 
 def compute_hfen(img1, img2):
     img1 = np.squeeze(img1).astype(np.float64)
     img2 = np.squeeze(img2).astype(np.float64)
-    
-    if img1.ndim != 3:
-        raise ValueError(f"Expected 3D volumes after squeezing, but got shape {img1.shape}")
-
+    if img1.ndim != 3: raise ValueError(f"Expected 3D volumes, got shape {img1.shape}")
     filt_siz = np.array([15, 15, 15])
     sig = np.array([1.5, 1.5, 1.5])
     siz = (filt_siz - 1) / 2
-    
     x_range = np.arange(-siz[0], siz[0] + 1)
     y_range = np.arange(-siz[1], siz[1] + 1)
     z_range = np.arange(-siz[2], siz[2] + 1)
     x, y, z = np.meshgrid(x_range, y_range, z_range, indexing='ij')
-    
     h = np.exp(-(x**2 / (2 * sig[0]**2) + y**2 / (2 * sig[1]**2) + z**2 / (2 * sig[2]**2)))
     h = h / np.sum(h)
     arg = (x**2 / sig[0]**4 + y**2 / sig[1]**4 + z**2 / sig[2]**4 - (1/sig[0]**2 + 1/sig[1]**2 + 1/sig[2]**2))
     H = arg * h
     H = H - (np.sum(H) / np.prod(filt_siz))
-    
     img1_log = convn(img1, H, mode='same')
     img2_log = convn(img2, H, mode='same')
     return compute_rmse(img1_log, img2_log)
@@ -123,21 +110,17 @@ def compute_ssim_numpy(img1_np, img2_np, window_size=11, size_average=True):
 # =====================================================================
 # 2. GLOBAL FULL-RESOLUTION INVERSION OBJECTIVES
 # =====================================================================
-
 class DataConsistencyLoss(nn.Module):
-    """Evaluated on the FULL 176x176x160 space to prevent field truncation errors."""
     def __init__(self, matrix_size=(176, 176, 160)):
         super().__init__()
         kx = torch.fft.fftfreq(matrix_size[0])
         ky = torch.fft.fftfreq(matrix_size[1])
         kz = torch.fft.fftfreq(matrix_size[2])
         KX, KY, KZ = torch.meshgrid(kx, ky, kz, indexing="ij")
-        
         k2 = KX**2 + KY**2 + KZ**2
         k2 = torch.where(k2 == 0, torch.ones_like(k2) * 1e-12, k2)
         kernel = (1.0 / 3.0) - (KZ**2 / k2)
         kernel[0, 0, 0] = 0.0
-        
         self.register_buffer("D", kernel)
         self.mse = nn.MSELoss()
 
@@ -146,26 +129,21 @@ class DataConsistencyLoss(nn.Module):
         sim_field = torch.fft.ifftn(self.D * pred_fft, dim=(-3, -2, -1)).real.unsqueeze(1)
         return self.mse(sim_field * mask, input_local_field * mask)
 
-
 class FrozenSwinUNETRTeacher(nn.Module):
-    """Extracts features from NATIVE 64x64x64 patches without sub-sampling blur."""
     def __init__(self, checkpoint_path):
         super().__init__()
         self.swin_unetr = SwinUNETR(in_channels=1, out_channels=1, feature_size=48, use_checkpoint=False)
         self.gap = nn.AdaptiveAvgPool3d(1)
-        
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         s_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else (checkpoint["model"] if "model" in checkpoint else checkpoint)
         encoder_dict = {k[11:] if k.startswith("swin_unetr.") else (k[7:] if k.startswith("module.") else k): v for k, v in s_dict.items()}
         self.swin_unetr.load_state_dict(encoder_dict, strict=False)
-        
-        for param in self.parameters():
-            param.requires_grad = False
+        for param in self.parameters(): param.requires_grad = False
 
     def forward(self, x):
         hidden_states_out = self.swin_unetr.swinViT(x)
         pooled = self.gap(hidden_states_out[4])
-        return pooled.view(pooled.view(0).size(0), -1)
+        return pooled.view(pooled.size(0), -1)
 
 # =====================================================================
 # 3. PATHS & PARAMETER CONFIGURATIONS
@@ -173,47 +151,166 @@ class FrozenSwinUNETRTeacher(nn.Module):
 device_id = 0
 device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")
 
-# STTR Iterative Refining Regularization Constants
-STTR_ITERS = 40          # Refinement steps per volume orientation
-STTR_LR    = 1e-3        # Higher learning rate since we are updating voxels directly
+STTR_ITERS = 40          
+STTR_LR    = 1e-3        
 
-# Loss Scaling Coefficients
-lambda_dc  = 1.0         # Data consistency physics constraint
-lambda_prior = 0.05      # L1 structural anchor protection weight
-lambda_sem   = 0.01      # Manifold nearest-neighbor pull strength
+lambda_dc    = 1.0         
+lambda_prior = 0.05      
+lambda_sem   = 0.01      
 
 raw_data_path = '/media/venkatesh/DATA/venkatesh/IISc/MIG_LAB_WORK/Experiments/QSM_venkatesh/QSM_data/data_for_experiments/given_data/raw_data_names_modified/'
 data_path     = '/media/venkatesh/DATA/venkatesh/IISc/MIG_LAB_WORK/Experiments/QSM_venkatesh/QSM_data/data_for_experiments/given_data/data_source_1/'
 stats_path    = os.path.join(data_path, 'csv_files/tr-stats.mat')
 teacher_path  = "pretrained/ssl_pretrained_weights.pth"
 database_path = "pretrained/7T_embedding_database.pt"
+ref_7t_path   = "/media/venkatesh/DATA/venkatesh/IISc/MIG_LAB_WORK/Experiments/QSM_venkatesh/QSM_data/data_for_experiments/lpcnn_data_for_training/data_as_patches/"
 
-
-# Load the weights generated during Stage 2 training as our initialization warm start
-#stage2_model_checkpoint = "pretrained/qsmnet_stage2_epoch_50.pt"
-stage2_model_checkpoint="savedModels_stage2/qsmnet_stage2_epoch_7.pt"
+stage2_model_checkpoint = "savedModels_stage2/qsmnet_stage2_epoch_7.pt"
 patients_list = [7, 8, 9, 10, 11, 12]
 results = []
 
 outdir = "savedModels_stage2/STTR_Inference_Outputs/"
 os.makedirs(outdir, exist_ok=True)
+os.makedirs("pretrained", exist_ok=True)
 
-# Initialize frozen modules
+# Initialize teacher network
 teacher_net = FrozenSwinUNETRTeacher(checkpoint_path=teacher_path).to(device).eval()
+
+# -----------------------------------------------------------------
+# 🔍 AUTOMATIC MANIFOLD DATABASE COMPILER
+# -----------------------------------------------------------------
+# if not os.path.exists(database_path):
+#     print("[*] 7T Embedding Database missing. Compiling 7T Manifold directly...")
+#     manifold_database = []
+#     # Fetch all patches from your LPCNN directory
+#     patch_files = [f for f in os.listdir(ref_7t_path) if f.endswith('.mat')]
+    
+#     if len(patch_files) == 0:
+#         print(f"❌ Error: No .mat files found in 7T data path: {ref_7t_path}")
+#         exit()
+        
+#     for idx, file in enumerate(patch_files):
+#         mat = sio.loadmat(os.path.join(ref_7t_path, file))
+#         # Safely locate the correct susceptibility dictionary variable name
+#         k = 'qsm_7t' if 'qsm_7t' in mat else [key for key in mat.keys() if not key.startswith('__')][0]
+#         tensor = torch.from_numpy(mat[k].astype(float)).unsqueeze(0).unsqueeze(0).float().to(device)
+        
+#         with torch.no_grad():
+#             z = teacher_net(tensor)
+#             manifold_database.append(z.cpu())
+            
+#     manifold_tensor = torch.cat(manifold_database, dim=0)
+#     torch.save(manifold_tensor, database_path)
+#     print(f"[✓] Compiled {manifold_tensor.shape[0]} patches into {database_path}\n")
+
+
+
+
+
+
+
+# # -----------------------------------------------------------------
+# # 🔍 AUTOMATIC MANIFOLD DATABASE COMPILER (Updated with Exact Key 'susc')
+# # -----------------------------------------------------------------
+# if not os.path.exists(database_path):
+#     print("[*] 7T Embedding Database missing. Compiling 7T Manifold directly...")
+#     manifold_database = []
+#     # Fetch all patches from your LPCNN directory
+#     patch_files = [f for f in os.listdir(ref_7t_path) if f.endswith('.mat')]
+    
+#     if len(patch_files) == 0:
+#         print(f"❌ Error: No .mat files found in 7T data path: {ref_7t_path}")
+#         exit()
+        
+#     for idx, file in enumerate(patch_files):
+#         mat = sio.loadmat(os.path.join(ref_7t_path, file))
+        
+#         # 🟢 FIX: Directly target 'susc' if present, otherwise fallback safely
+#         if 'susc' in mat:
+#             k = 'susc'
+#         elif 'qsm_7t' in mat:
+#             k = 'qsm_7t'
+#         else:
+#             k = [key for key in mat.keys() if not key.startswith('__')][0]
+            
+#         tensor = torch.from_numpy(mat[k].astype(float)).unsqueeze(0).unsqueeze(0).float().to(device)
+        
+#         with torch.no_grad():
+#             z = teacher_net(tensor)
+#             manifold_database.append(z.cpu())
+            
+#     manifold_tensor = torch.cat(manifold_database, dim=0)
+#     torch.save(manifold_tensor, database_path)
+#     print(f"[✓] Compiled {manifold_tensor.shape[0]} patches into {database_path}\n")
+
+
+
+
+import tqdm
+
+# -----------------------------------------------------------------
+# 🔍 AUTOMATIC MANIFOLD DATABASE COMPILER (Updated with Exact Key 'susc' & tqdm)
+# -----------------------------------------------------------------
+if not os.path.exists(database_path):
+    print("[*] 7T Embedding Database missing. Compiling 7T Manifold directly...")
+    manifold_database = []
+    # Fetch all patches from your LPCNN directory
+    patch_files = [f for f in os.listdir(ref_7t_path) if f.endswith('.mat')]
+    
+    if len(patch_files) == 0:
+        print(f"❌ Error: No .mat files found in 7T data path: {ref_7t_path}")
+        exit()
+        
+    # 🟢 Wrapped patch files with a descriptive tqdm progress bar
+    pbar_comp = tqdm.tqdm(patch_files, desc="Compiling 7T Manifold", leave=True)
+        
+    for file in pbar_comp:
+        mat = sio.loadmat(os.path.join(ref_7t_path, file))
+        
+        # Directly target 'susc' if present, otherwise fallback safely
+        if 'susc' in mat:
+            k = 'susc'
+        elif 'qsm_7t' in mat:
+            k = 'qsm_7t'
+        else:
+            k = [key for key in mat.keys() if not key.startswith('__')][0]
+            
+        tensor = torch.from_numpy(mat[k].astype(float)).unsqueeze(0).unsqueeze(0).float().to(device)
+        
+        with torch.no_grad():
+            z = teacher_net(tensor)
+            manifold_database.append(z.cpu())
+            
+    manifold_tensor = torch.cat(manifold_database, dim=0)
+    torch.save(manifold_tensor, database_path)
+    print(f"[✓] Compiled {manifold_tensor.shape[0]} patches into {database_path}\n")
+
+
+
+
+#%%
+
+
+
+
+
+
+
+
+# Load the compiled database
 manifold_db = torch.load(database_path, map_location=device)  # Shape: [N, 768]
 
-# Load frozen reconstruction backbone network to provide our baseline χ₀ maps
+# Load frozen reconstruction backbone network
 recon_net = QSMnet().to(device)
 if os.path.exists(stage2_model_checkpoint):
     recon_net.load_state_dict(torch.load(stage2_model_checkpoint, map_location=device))
     print(f"[✓] Warm-start network weights loaded from: {stage2_model_checkpoint}")
 else:
-    print(f"❌ Error: Stage 2 weight file missing at {stage2_model_checkpoint}. Please run Stage 2 training first.")
+    print(f"❌ Error: Stage 2 weight file missing at {stage2_model_checkpoint}")
     exit()
     
 recon_net.eval()
-for param in recon_net.parameters(): 
-    param.requires_grad = False  # Completely freeze network parameters
+for param in recon_net.parameters(): param.requires_grad = False  
 
 # Load normalization statistics
 stats = sio.loadmat(stats_path)
@@ -239,7 +336,6 @@ for i in patients_list:
         except FileNotFoundError:
             continue
 
-        # Convert to 5D tensors
         phs = torch.from_numpy(phs_raw).float().unsqueeze(0).unsqueeze(0).to(device)
         msk = torch.from_numpy(msk_raw).float().unsqueeze(0).unsqueeze(0).to(device)
         phs = phs * msk
@@ -258,43 +354,37 @@ for i in patients_list:
         # --- STEP 3: REFINE SUSCEPTIBILITY INTEGRITIES OVER ITERATIONS ---
         for step in range(STTR_ITERS):
             sttr_optimizer.zero_grad()
-            
-            # Keep the background masked during parameter steps
             chi_masked = chi * msk
             
-            # Force compliance with raw physical field constraints (Full Volume)
+            # Constraints paths
             loss_dc = criterion_dc(chi_masked, phs, msk)
+            loss_p  = torch.mean(torch.abs(chi_masked - chi_0))
             
-            # Structural Anchor Prior: Prevent anatomy drift from baseline
-            loss_p = torch.mean(torch.abs(chi_masked - chi_0))
-            
-            # Asymmetric Manifold Pull (Patch-Scale Semantics)
-            # Crop a native 64x64x64 sub-patch from the brain matrix center
+            # Crop native 64x64x64 central sub-patch
             chi_patch = chi_masked[:, :, 56:120, 56:120, 48:112]
-            z_pred = teacher_net(chi_patch)  # Shape: [1, 768]
+            z_pred = teacher_net(chi_patch)  
             
-            # Real-time Nearest Neighbor Manifold Search
+            # Nearest Neighbor Manifold Search
             with torch.no_grad():
                 distances = torch.sum((z_pred - manifold_db) ** 2, dim=1)
                 nearest_idx = torch.argmin(distances)
                 z_nearest = manifold_db[nearest_idx]
                 
             loss_semantic = torch.mean((z_pred - z_nearest) ** 2)
-            
-            # Total objective score summary
             total_loss = (lambda_dc * loss_dc) + (lambda_prior * loss_p) + (lambda_sem * loss_semantic)
             
             total_loss.backward()
             sttr_optimizer.step()
 
-        # Save finalized voxel prediction arrays back to CPU host memory
+        # Save prediction array back to CPU
         x_k_cpu = (chi * msk).squeeze().detach().cpu().numpy()
         sio.savemat(os.path.join(outdir, f"susc_cal_sttr_{i}_{j}.mat"), {"sus_cal": x_k_cpu})
 
-        # Run validation benchmark statistics
+        # Calculations stats
         psnr_val = compute_psnr(x_k_cpu, sus)
         rmse_val = compute_rmse(x_k_cpu, sus)
         hfen_val = compute_hfen(x_k_cpu, sus)
+        # ssim_val = compute_ssim_numpy(x_k_cpu, sus)
 
         sus_copy = np.copy(sus)            
         sus_copy = np.expand_dims(sus_copy, axis=0)  # Shape becomes (1, depth, height, width)
@@ -302,6 +392,7 @@ for i in patients_list:
 
         # [cite_start]Calculates 3D SSIM via requested module library parameters [cite: 1001]
         ssim_val = compute_ssim_numpy(x_k_cpu, sus_copy)
+
 
         print(f"   ↳ Patient_{i} Orient_{j} Optimized | "
               f"SSIM: {ssim_val:.4f} | PSNR: {psnr_val:.2f} dB | "
@@ -318,7 +409,6 @@ df_results = pd.DataFrame(results)
 csv_save_path = os.path.join(outdir, "sttr_evaluation_results.csv")
 df_results.to_csv(csv_save_path, index=False)
 
-# Compute mean values and variance properties across test groups
 means = df_results[['ssim', 'psnr', 'rmse', 'hfen']].mean()
 stds  = df_results[['ssim', 'psnr', 'rmse', 'hfen']].std()
 
@@ -331,12 +421,10 @@ print(f"  • Overall RMSE (%) : {means['rmse']:.4f} ± {stds['rmse']:.4f}%")
 print(f"  • Overall HFEN    : {means['hfen']:.4f} ± {stds['hfen']:.4f}")
 print("="*75)
 
-print("\n[Granular Breakdown] Mean Metrics Grouped Per Patient:")
 patient_summary = df_results.groupby('patient')[['ssim', 'psnr', 'rmse', 'hfen']].mean()
 print(patient_summary.to_string())
 print("="*75)
 
-# Save text summary report log
 summary_txt_path = os.path.join(outdir, "summary_metrics.txt")
 with open(summary_txt_path, "w") as f:
     f.write("=== STAGE-III STTR REFINEMENT SUMMARY AGGREGATES ===\n")
@@ -347,17 +435,14 @@ with open(summary_txt_path, "w") as f:
     f.write("=== PER PATIENT AVERAGES ===\n")
     f.write(patient_summary.to_string())
 
-# Plot comparative slice matrix outputs
 fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 axes[0].imshow(x_k_cpu[:, :, 80], cmap='gray', clim=(-0.1, 0.1))
 axes[0].set_title('Stage-III STTR Refined Result (Slice 80)')
 axes[0].axis('off')
-
 axes[1].imshow(sus[:, :, 80], cmap='gray', clim=(-0.1, 0.1))
 axes[1].set_title('Ground Truth COSMOS')
 axes[1].axis('off')
-
 plt.tight_layout()
 plt.savefig(os.path.join(outdir, "sttr_verification_slice.png"), dpi=150)
 plt.close()
-print(f"✅ STTR verification complete. Spreadsheets and summary logs stored inside: {outdir}")
+print(f"✅ STTR verification complete. Outputs saved inside: {outdir}")
